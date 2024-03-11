@@ -1,6 +1,6 @@
 # Overview 
 
-This script retrieves the latest and current API versions of the Azure resources deployed in a specified GC subscription. 
+This script retrieves the latest and current API versions of the Azure resources deployed in a specified Azure Subscription. 
 The script uses Azure PowerShell and Azure DevOps REST APIs to perform the following steps:
 
 - Get the list of repositories under the provided Azure DevOps (AzDO) project and clone/download them locally.
