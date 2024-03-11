@@ -1,0 +1,104 @@
+trigger: none
+
+schedules:
+  - cron: "0 0 * */3 *"
+    displayName: Run the Pipeline at 00:00 in every 3 months.
+    branches:
+     include:
+       - master
+    always: true
+
+pool:                                         #Remove this if you are planning to use MS hosted agent pools.
+  name: default                               #Name of the pool in which the Self hosted Pipeline agent is deployed.
+  demands: Agent.Name -equals <Self Hosted Agent>
+
+variables: 
+  azureSubscription-Dev: ""
+  azureSubscription-Stage: ""
+  azureSubscription-Prod: ""
+
+stages:
+
+- stage: AzAPIVersion
+  displayName: "Az Resource API Version."
+  jobs:
+    - deployment: 
+      environment: Multi
+      strategy:
+       runOnce:
+         deploy:
+           steps:
+             - checkout: self
+               clean: true
+             - task: AzurePowerShell@5
+               displayName: "Integration Sub"
+               inputs:
+                 azureSubscription: '$(azureSubscription-Dev)'
+                 ScriptType: 'FilePath'
+                 ScriptPath: '$(Agent.BuildDirectory)/s/AzAPIVersion/azResourcesApiVersion.ps1'
+                 ScriptArguments: '-PAT $(PAT) -outputFileCSV D:\Agent\apiResult\output-Int.csv'
+                 errorActionPreference: silentlyContinue
+                 azurePowerShellVersion: 'LatestVersion'
+             - task: AzurePowerShell@5
+               displayName: "Stg Sub"
+               inputs:
+                 azureSubscription: '$(azureSubscription-Stage)'
+                 ScriptType: 'FilePath'
+                 ScriptPath: '$(Agent.BuildDirectory)/s/AzAPIVersion/azResourcesApiVersion.ps1'
+                 ScriptArguments: '-PAT $(PAT) -outputFileCSV D:\Agent\apiResult\output-Stg.csv'
+                 errorActionPreference: silentlyContinue
+                 azurePowerShellVersion: 'LatestVersion'
+             - task: AzurePowerShell@5
+               displayName: "Prod Sub"
+               inputs:
+                 azureSubscription: '$(azureSubscription-Prod)'
+                 ScriptType: 'FilePath'
+                 ScriptPath: '$(Agent.BuildDirectory)/s/AzAPIVersion/azResourcesApiVersion.ps1'
+                 ScriptArguments: '-PAT $(PAT) -outputFileCSV D:\Agent\apiResult\output-Prd.csv'
+                 errorActionPreference: silentlyContinue
+                 azurePowerShellVersion: 'LatestVersion'
+   
+             - task: PowerShell@2
+               displayName: "Merging all the Files."
+               inputs:
+                targetType: inline
+                script: |
+                  $Int = Import-Csv -Path "D:\Agent\apiResult\output-Int.csv"
+                  $Stg = Import-Csv -Path "D:\Agent\apiResult\output-Stg.csv"
+                  $Prd = Import-Csv -Path "D:\Agent\apiResult\output-Prd.csv"
+                  $Merged = $Int + $Stg + $Prd | Sort-Object -Unique ResourceType
+                  $Merged | Export-Csv -Path ".\Output.csv" -NoTypeInformation
+             - task: CopyFiles@2
+               displayName: 'Copy Files to: $(build.artifactstagingdirectory)/APIVersion'
+               inputs:
+                Contents: '**/Output.csv'
+                TargetFolder: '$(build.artifactstagingdirectory)/APIVersion'
+             - task: PublishPipelineArtifact@1
+               displayName: 'Publish Pipeline Artifact'
+               inputs:
+                artifact: APIVersion
+                targetPath: '$(build.artifactstagingdirectory)/APIVersion'  
+
+- stage: sendEmail
+  displayName: 'Bash Script - Send Email'
+  jobs:
+    - deployment: 
+      environment: Prod
+      strategy:
+       runOnce:
+         deploy:
+           steps:
+             - checkout: self
+               clean: true
+             - task: DownloadPipelineArtifact@2
+               displayName: 'Download Pipeline Artifact'
+               inputs:
+                artifactName: 'APIVersion'
+                targetPath: '$(Pipeline.Workspace)'
+             - task: Bash@3
+               displayName: 'Bash Script - Send Email'
+               inputs:
+                targetType: inline
+                script: |
+                  cd $(Pipeline.Workspace)
+                  echo "Please find the attached output.csv file containing the API Version for all the Azure Resources deployed in Azure Subscriptions" | mailx -s "Latest and Current API Version of Azure Resources" -a Output.csv user1@gmail.com Email.Recipient2@gmail.com Email.Recipient3@gmail.com 
